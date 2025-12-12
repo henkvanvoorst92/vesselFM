@@ -1,17 +1,28 @@
 defaults:
   - train
-  - data: eval_smile
+  - data: eval_hvv
   - _self_
 
 num_shots: 0
 lr: 0.00001
 devices: [0]
 run_name: vesselfm
-path_to_chkpt: /path/to/pretrained_ckpt #TODO
-chkpt_folder:  /path/where/to/store/ckpts #TODO
+path_to_chkpt: /media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/vesselFM/checkpoints/ckpt.pt
+chkpt_folder:  /media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/vesselFM/checkpoints #TODO
+num_classes: 3
+
+model:
+  out_channels: ${num_classes}
 
 dataloader:
   shuffle: False
+  #changed by me
+  num_workers: 4
+  prefetch_factor: 2
+  #added by me
+  collate_fn:
+    _target_: vesselfm.seg.dataset.list2batch_collate_fn
+    _partial_: True
 
 trainer:
   lightning_trainer:
@@ -25,6 +36,15 @@ trainer:
     prediction_threshold: 0.62
     batch_size: ${batch_size}
     input_size: ${input_size}
+
+    loss:
+      _target_: monai.losses.DiceCELoss
+      reduction: "mean"
+      squared_pred: True
+      lambda_ce: 0.1
+      lambda_dice: 0.9
+      to_onehot_y: True
+      include_background: False
 
     scheduler_configs:
       cosine_annealing_few:

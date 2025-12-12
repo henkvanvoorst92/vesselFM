@@ -4,9 +4,14 @@ defaults:
   - _self_
 
 # i/o
-image_path: /path/to/image_folder #TODO
+#image_path: "/home/hvv/Documents/nnunet_folder/nnUNet_raw/Dataset519_AV_cta/imagesTr"
+#image_path: "/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/processed/time_averages"
+image_path: "/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/cta_crisp2/cta"
 image_file_ending: nii.gz
-output_folder: /path/to/output_folder # TODO
+#output_folder: "/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/raw_CTP_melbourne/cta_crisp2/cta_Dataset509_CTAvseg"
+#output_folder: "/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/processed/519_vesselFM_cta"
+#output_folder: "/media/hvv/ec2480e5-6c18-468c-b971-5271432b386d/hvv/raw_CTP_melbourne/processed/521_vesselFM_ta"
+output_folder: '/media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/vesselFM/test_fold_0'
 file_app: ""
 
 mask_path: null
@@ -14,10 +19,10 @@ round_to: 2
 
 # model & ckpt
 device: cuda:0
-ckpt_path: /path/to/ckpt.pt
+ckpt_path: /media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/vesselFM/checkpoints/vesselfm/finetune_3shot_hvv_vesselfm/finetune_3shot_hvv_vesselfm_last.ckpt
 
 # sliding window inferer
-batch_size: 16
+batch_size: 8
 patch_size: [128, 128, 128]
 overlap: 0.5
 mode: "constant"

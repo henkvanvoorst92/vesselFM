@@ -12,12 +12,12 @@ from lightning.pytorch import seed_everything
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
-from vesselfm.seg.dataset import UnionDataset
-from vesselfm.seg.utils.evaluation import Evaluator
+from vesselfm.seg.dataset import UnionDataset, MyUnionDataset
+from vesselfm.seg.utils.evaluation import Evaluator, MulticlassEvaluator
+from vesselfm.seg.inference import load_model
 
 warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
-
 
 @hydra.main(config_path="configs", config_name="finetune", version_base="1.3.2")
 def main(cfg):
@@ -59,44 +59,34 @@ def main(cfg):
     trainer = trainer(**trainer_additional_kwargs)
 
     # init dataloader
-    train_dataset = UnionDataset(cfg.data, "train", finetune=True)
+    train_dataset = MyUnionDataset(cfg.data, "train", finetune=True)
     train_dataset = Subset(train_dataset, range(cfg.num_shots))
+    #(img,seg) = train_dataset[0]
+    #print(seg[0].unique())
 
     random_sampler = RandomSampler(train_dataset, replacement=True, num_samples=int(1e6))
     train_loader = hydra.utils.instantiate(cfg.dataloader)(dataset=train_dataset, sampler=random_sampler)
     logger.info(f"Train dataset size mapped to {len(train_dataset)} samples")
 
-    val_dataset = UnionDataset(cfg.data, "val", finetune=True)
+    val_dataset = MyUnionDataset(cfg.data, "val", finetune=True)
     val_loader = hydra.utils.instantiate(cfg.dataloader)(dataset=val_dataset, batch_size=1)
     logger.info(f"Val dataset size: {len(val_dataset)}")
 
-    test_dataset = UnionDataset(cfg.data, "test", finetune=True)
-    test_loader = hydra.utils.instantiate(cfg.dataloader)(dataset=test_dataset, batch_size=1)
-    logger.info(f"Test dataset size: {len(test_dataset)}")
-    
-    # init model
-    model = hydra.utils.instantiate(cfg.model)
-    if cfg.path_to_chkpt is not None:
-        chkpt = torch.load(cfg.path_to_chkpt, map_location=f'cuda:{cfg.devices[0]}')
-        model_chkpt = {k.replace("model.", ""): e for k, e in chkpt["state_dict"].items() if "model" in k}
-        model.load_state_dict(model_chkpt)
-
+    model = load_model(cfg, f'cuda:{cfg.devices[0]}')
     # init lightning module
-    evaluator = Evaluator()
+    evaluator = MulticlassEvaluator(log_mode=True) #does not log dicts
+
     lightning_module = hydra.utils.instantiate(cfg.trainer.lightning_module)(
         model=model, evaluator=evaluator, dataset_name=dataset_name
     )
 
     # train loop and eval
     wnb_logger.watch(model, log="all", log_freq=20)
-    if cfg.num_shots == 0:
-        trainer.test(lightning_module, test_loader) # eval on test set
-    else:
-        logger.info("Starting training")
-        trainer.validate(lightning_module, val_loader)
-        trainer.fit(lightning_module, train_loader, val_loader)
-        logger.info("Finished training")
-        trainer.test(lightning_module, test_loader, ckpt_path="best")
+    logger.info("Starting training")
+    trainer.validate(lightning_module, val_loader)
+    trainer.fit(lightning_module, train_loader, val_loader)
+    logger.info("Finished training")
+    #trainer.test(lightning_module, test_loader, ckpt_path="best")
 
 
 if __name__ == "__main__":

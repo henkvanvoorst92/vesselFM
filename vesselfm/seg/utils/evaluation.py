@@ -43,7 +43,25 @@ class PretrainEvaluationDataset(Dataset):
         name = self._samples[idx]
         image, mask = self.val_data[self._samples[idx]]
         return image, mask, name
-        
+
+# Insert your existing betti_number methods here
+def betti_number(self, img):
+    # Your implementation (binary image -> [b0, b1, b2])
+    assert img.ndim == 3
+    N6 = 1
+    N26 = 3
+
+    padded = np.pad(img, pad_width=1)
+    assert set(np.unique(padded)).issubset({0, 1})
+
+    _, b0 = label(padded, return_num=True, connectivity=N26)
+    euler_char_num = euler_number(padded, connectivity=N26)
+    _, b2 = label(1 - padded, return_num=True, connectivity=N6)
+
+    b2 -= 1
+    b1 = b0 + b2 - euler_char_num
+    return [b0, b1, b2]
+
 
 class Evaluator:
     def extract_labels(self, gt_array, pred_array):
@@ -164,6 +182,226 @@ class Evaluator:
         metrics["betti_2"] = betti_2
         return metrics
 
+
+class MulticlassEvaluator(Evaluator):
+    def __init__(self, ignore_index=[0], log_mode=False):
+        """
+        ignore_index: class to exclude from evaluation (e.g., void)
+        """
+        super().__init__()
+        self.ignore_index = ignore_index
+        self.log_mode = log_mode
+
+    def estimate_metrics(self, pred_logits, gt, threshold=0.5, compute_auc=True, fast=False):
+        """
+        pred_logits: numpy array (H,W,(D),C) or torch tensor of class scores
+        gt: numpy array (H,W,(D)) integer labels in [0..num_classes-1]
+        num_classes: how many classes
+        """
+        metrics = {}
+        # Convert logits to predicted label map
+        if hasattr(pred_logits, "cpu"):
+            pred = pred_logits.cpu().detach().numpy()
+        if hasattr(gt, "cpu"):
+            gt = gt.cpu().detach().numpy()
+
+        num_classes = np.unique(gt)
+        # If last dim is classes
+        pred_labels = np.argmax(pred, axis=0)
+
+        per_class_metrics = {}
+        betti_per_class = {}
+        betti_err_per_class = {}
+        cldice_per_class = {}
+        TP_sum = FP_sum = FN_sum = TN_sum = 0
+        for c in num_classes:
+            if c in self.ignore_index:
+                continue
+
+            # Build one-vs-all masks
+            gt_mask = (gt == c).astype(int)
+            pred_mask = (pred_labels == c).astype(int)
+
+            # Confusion counts
+            tp = np.sum((pred_mask == 1) & (gt_mask == 1))
+            fp = np.sum((pred_mask == 1) & (gt_mask == 0))
+            fn = np.sum((pred_mask == 0) & (gt_mask == 1))
+            tn = np.sum((pred_mask == 0) & (gt_mask == 0))
+
+            TP_sum += tp;
+            FP_sum += fp;
+            FN_sum += fn;
+            TN_sum += tn
+
+            # Basic metrics
+            dice = (2 * tp) / (2 * tp + fp + fn + 1e-7)
+            iou = tp / (tp + fp + fn + 1e-7)
+
+            roc_auc = roc_auc_score(gt_mask.flatten(), pred[c].flatten())
+            pr_auc = average_precision_score(gt_mask.flatten(), pred[c].flatten())
+
+            per_class_metrics[c] = {
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "tn": tn,
+                "dice": dice,
+                "iou": iou,
+                "precision": tp / (tp + fp + 1e-7),
+                "recall": tp / (tp + fn + 1e-7),
+                'auroc': roc_auc,
+                'aupr': pr_auc,
+            }
+
+            # Betti numbers per class
+            # (use inherited functions)
+            try:
+                b0_gt, b1_gt, b2_gt = self.betti_number(gt_mask)
+            except Exception:
+                # If 2D, b2 is zero
+                b0_gt, b1_gt, b2_gt = [None] * 3
+
+            try:
+                b0_pred, b1_pred, b2_pred = self.betti_number(pred_mask)
+            except Exception:
+                b0_pred, b1_pred, b2_pred = [None] * 3
+
+            betti_per_class[c] = {
+                "b0_gt": b0_gt,
+                "b1_gt": b1_gt,
+                "b2_gt": b2_gt,
+                "b0_pred": b0_pred,
+                "b1_pred": b1_pred,
+                "b2_pred": b2_pred,
+            }
+
+            # Betti errors
+            betti_err_per_class[c] = {
+                "betti_0_error": abs(b0_pred - b0_gt)
+                if b0_gt is not None
+                else None,
+                "betti_1_error": abs(b1_pred - b1_gt)
+                if b1_gt is not None
+                else None,
+                "betti_2_error": abs(b2_pred - b2_gt)
+                if b2_gt is not None
+                else None,
+            }
+
+            # clDice
+            # rely on inherited cl_dice; pass binary masks
+            try:
+                cldice_val = self.cl_dice(
+                    pred_mask.astype(np.uint8),
+                    gt_mask.astype(np.uint8),
+                )
+            except Exception:
+                cldice_val = None
+
+            cldice_per_class[c] = cldice_val
+
+        # Collect across classes
+        if not self.log_mode:
+            metrics["per_class"] = per_class_metrics
+            metrics["betti_per_class"] = betti_per_class
+            metrics["betti_error_per_class"] = betti_err_per_class
+            metrics["cldice_per_class"] = cldice_per_class
+
+        # Macro averages
+        metrics["dice_macro"] = np.mean(
+            [v["dice"] for v in per_class_metrics.values()]
+        )
+        metrics["iou_macro"] = np.mean(
+            [v["iou"] for v in per_class_metrics.values()]
+        )
+        metrics["cldice_macro"] = np.mean(
+            [v for v in cldice_per_class.values() if v is not None]
+        )
+
+        # Macro Betti errors (ignoring None)
+        b0_errs = [
+            v["betti_0_error"]
+            for v in betti_err_per_class.values()
+            if v["betti_0_error"] is not None
+        ]
+        b1_errs = [
+            v["betti_1_error"]
+            for v in betti_err_per_class.values()
+            if v["betti_1_error"] is not None
+        ]
+        b2_errs = [
+            v["betti_2_error"]
+            for v in betti_err_per_class.values()
+            if v["betti_2_error"] is not None
+        ]
+
+        metrics["betti_0_error_macro"] = (
+            np.mean(b0_errs) if len(b0_errs) > 0 else None
+        )
+        metrics["betti_1_error_macro"] = (
+            np.mean(b1_errs) if len(b1_errs) > 0 else None
+        )
+        metrics["betti_2_error_macro"] = (
+            np.mean(b2_errs) if len(b2_errs) > 0 else None
+        )
+
+        # Optional: overall AUC & PR-AUC per class
+        # Only if pred_logits are continuous and shapes match
+        if compute_auc:
+            try:
+                # Flatten for one-hot
+                gt_onehot = self._one_hot(gt, len(num_classes))
+                pred_soft = pred / np.sum(pred, axis=0, keepdims=True)
+                # roc_auc (macro)
+                metrics["roc_auc_macro"] = roc_auc_score(
+                    gt_onehot.reshape(-1, len(num_classes)),
+                    pred_soft.reshape(-1, len(num_classes)),
+                    average="macro",
+                    multi_class="ovo",
+                )
+                metrics["pr_auc_macro"] = average_precision_score(
+                    gt_onehot.reshape(-1, len(num_classes)),
+                    pred_soft.reshape(-1, len(num_classes)),
+                )
+            except Exception:
+                metrics["roc_auc_macro"] = None
+                metrics["pr_auc_macro"] = None
+
+        def _macro(key):
+            vals = [per_class_metrics[c][key] for c in per_class_metrics.keys()]
+            return float(np.mean(vals)) if len(vals) else 0.0
+
+        if not self.log_mode:
+            metrics['macro_avg'] = {
+                'dice': _macro('dice'),
+                'recall': _macro('recall'),
+                'precision': _macro('precision'),
+            }
+
+            # Micro average (pool TP/FP/FN/TN over classes)
+            dice_micro = (2 * TP_sum) / (2 * TP_sum + FP_sum + FN_sum) if (2 * TP_sum + FP_sum + FN_sum) > 0 else 0.0
+            tpr_micro = TP_sum / (TP_sum + FN_sum) if (TP_sum + FN_sum) > 0 else 0.0
+            fpr_micro = FP_sum / (FP_sum + TN_sum) if (FP_sum + TN_sum) > 0 else 0.0
+            ppv_micro = TP_sum / (TP_sum + FP_sum) if (TP_sum + FP_sum) > 0 else 0.0
+            npv_micro = TN_sum / (TN_sum + FN_sum) if (TN_sum + FN_sum) > 0 else 0.0
+
+            metrics['micro_avg'] = {
+                'dice': float(dice_micro),
+                'recall': float(tpr_micro),
+                #'FPR': float(fpr_micro),
+                'precision': float(ppv_micro),
+                #'NPV': float(npv_micro),
+            }
+
+        metrics["dice"] = metrics["dice_macro"]
+
+        return metrics
+    def _one_hot(self, arr, num_classes):
+        """
+        Helper: one-hot encode integer labels
+        """
+        oh = np.eye(num_classes)[arr.reshape(-1)]
+        return oh.reshape(*arr.shape, num_classes)
 
 def read_nifti(path: str):
     return sitk.GetArrayFromImage(sitk.ReadImage(path))

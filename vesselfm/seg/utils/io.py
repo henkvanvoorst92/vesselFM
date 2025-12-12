@@ -285,7 +285,9 @@ class SimpleITKReaderWriter(BaseReaderWriter):
             logger.debug(f"Image {image_fname} has shape {image.GetSize()}")
             image_data.append(sitk.GetArrayFromImage(image))
 
-            if image_data[-1].ndim != 3:
+            if image_data[-1].ndim ==4:
+                image = image[...,0]
+            elif image_data[-1].ndim != 3:
                 raise RuntimeError(
                     f"Image {image_fname} has dimension {image_data[-1].ndim}, expected 3"
                 )
