@@ -233,6 +233,10 @@ class MulticlassEvaluator(Evaluator):
             FN_sum += fn;
             TN_sum += tn
 
+            if fast:
+                per_class_metrics[c] = (2 * tp) / (2 * tp + fp + fn + 1e-7)
+                continue
+
             # Basic metrics
             dice = (2 * tp) / (2 * tp + fp + fn + 1e-7)
             iou = tp / (tp + fp + fn + 1e-7)
@@ -299,6 +303,14 @@ class MulticlassEvaluator(Evaluator):
                 cldice_val = None
 
             cldice_per_class[c] = cldice_val
+
+        if fast:
+            metrics["dice"] = (2 * TP_sum) / (2 * TP_sum + FP_sum + FN_sum) if (2 * TP_sum + FP_sum + FN_sum) > 0 else 0.0
+            for c in num_classes:
+                if c in self.ignore_index:
+                    continue
+                metrics[f'dice_class_{c}'] = per_class_metrics[c]
+            return metrics
 
         # Collect across classes
         if not self.log_mode:

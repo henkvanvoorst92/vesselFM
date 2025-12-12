@@ -7,8 +7,8 @@ num_shots: 0
 lr: 0.00001
 devices: [0]
 run_name: vesselfm
-path_to_chkpt: /media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/vesselFM/checkpoints/ckpt.pt
-chkpt_folder:  /media/hvv/71672b1c-e082-495c-b560-a2dfc7d5de59/data/vesselFM/checkpoints #TODO
+path_to_chkpt: 'None'
+chkpt_folder:  'None' #TODO
 num_classes: 3
 
 model:
@@ -33,7 +33,7 @@ trainer:
   lightning_module:
     _target_: vesselfm.seg.module.PLModuleFinetune
     _partial_: True
-    prediction_threshold: 0.62
+    prediction_threshold: 0.5
     batch_size: ${batch_size}
     input_size: ${input_size}
 

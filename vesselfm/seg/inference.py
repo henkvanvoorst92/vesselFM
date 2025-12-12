@@ -43,8 +43,12 @@ def load_model(cfg, device):
         #repeats the instantiated weights of single class for multiclass (manupulate checkpoint config)
         w_out = ckpt['output_block.conv.conv.weight'].detach().clone()
         b_out = ckpt['output_block.conv.conv.bias'].detach().clone()
-        ckpt['output_block.conv.conv.weight'] = torch.concat([w_out.to(device) for i in range(cfg.num_classes)])
-        ckpt['output_block.conv.conv.bias'] = torch.concat([b_out.to(device) for i in range(cfg.num_classes)])
+
+        w_unif = torch.nn.init.kaiming_uniform_(torch.empty_like(w_out))
+        b_unif = torch.nn.init.zeros_(torch.empty_like(b_out))
+
+        ckpt['output_block.conv.conv.weight'] = torch.concat([w_unif.to(device) for i in range(cfg.num_classes)])
+        ckpt['output_block.conv.conv.bias'] = torch.concat([b_unif.to(device) for i in range(cfg.num_classes)])
         model.load_state_dict(ckpt, strict=True)
 
     return model
